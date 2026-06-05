@@ -23,8 +23,8 @@
  */
 
 // ─── USER CONFIGURATION ────────────────────────────────────
-#define WIFI_SSID   "YOUR_WIFI_SSID"     // <-- change this
-#define WIFI_PASS   "YOUR_WIFI_PASSWORD" // <-- change this
+#define WIFI_SSID   "DH"     // <-- change this
+#define WIFI_PASS   "01714584611" // <-- change this
 // ───────────────────────────────────────────────────────────
 
 #include "esp_camera.h"
@@ -274,18 +274,176 @@ static esp_err_t controlHandler(httpd_req_t* req) {
     return ESP_OK;
 }
 
-// ─── WEB UI HANDLER ────────────────────────────────────────
-extern const uint8_t index_html_gz_start[] asm("_binary_index_html_gz_start");
-extern const uint8_t index_html_gz_end[]   asm("_binary_index_html_gz_end");
+// ─── WEB UI HTML (stored in flash via PROGMEM) ─────────────
+// Full FPV viewer — served directly from the ESP32 at http://<ip>/
+static const char INDEX_HTML[] PROGMEM = R"rawhtml(<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>ESP32-CAM FPV</title>
+<style>
+:root{--bg:#080c0f;--panel:#0d1419;--border:#1a2a35;--accent:#00e5ff;--accent2:#ff3d00;--green:#00ff87;--warn:#ffb300;--text:#cdd8e0}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;height:100dvh;display:grid;grid-template-rows:44px 1fr auto;overflow:hidden}
+header{display:flex;align-items:center;gap:12px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--border)}
+.logo{font-size:12px;letter-spacing:2px;color:var(--accent);text-transform:uppercase}
+.logo span{color:var(--accent2)}
+.meters{display:flex;gap:14px;align-items:center;margin-left:auto}
+.meter{display:flex;flex-direction:column;align-items:center;gap:1px}
+.mval{font-size:15px;color:var(--accent);line-height:1}
+.mlbl{font-size:8px;letter-spacing:1.5px;color:#4a6070;text-transform:uppercase}
+.badge{font-size:10px;letter-spacing:1px;padding:2px 8px;border-radius:2px;border:1px solid currentColor;text-transform:uppercase;margin-left:8px}
+.green{color:var(--green)}.red{color:var(--accent2)}
+main{position:relative;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center}
+#sv{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.hud{position:absolute;inset:0;pointer-events:none}
+.c{position:absolute;width:26px;height:26px;border-color:var(--accent);border-style:solid;opacity:.45}
+.tl{top:10px;left:10px;border-width:2px 0 0 2px}.tr{top:10px;right:10px;border-width:2px 2px 0 0}
+.bl{bottom:10px;left:10px;border-width:0 0 2px 2px}.br{bottom:10px;right:10px;border-width:0 2px 2px 0}
+.cx{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:18px;height:18px;opacity:.3}
+.cx::before,.cx::after{content:'';position:absolute;background:var(--accent)}
+.cx::before{width:1px;height:100%;left:50%;transform:translateX(-50%)}
+.cx::after{height:1px;width:100%;top:50%;transform:translateY(-50%)}
+.sl{position:absolute;inset:0;background:repeating-linear-gradient(to bottom,transparent 0,transparent 3px,rgba(0,0,0,.07) 3px,rgba(0,0,0,.07) 4px);pointer-events:none}
+.rec{position:absolute;top:12px;right:14px;display:flex;align-items:center;gap:5px;font-size:10px;letter-spacing:2px;color:var(--accent2);opacity:0;transition:opacity .3s}
+.rec.on{opacity:1}
+.rec::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--accent2);animation:blink 1s step-start infinite}
+@keyframes blink{50%{opacity:0}}
+.ns{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:5;transition:opacity .3s}
+.ns.hidden{opacity:0;pointer-events:none}
+.ns-icon{font-size:36px;opacity:.25}
+.ns-txt{font-size:11px;letter-spacing:3px;color:#4a6070;text-transform:uppercase}
+.ns-url{font-size:12px;color:var(--accent)}
+footer{background:var(--panel);border-top:1px solid var(--border);padding:7px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.lbl{font-size:9px;letter-spacing:1.5px;color:#4a6070;text-transform:uppercase;white-space:nowrap}
+select,input[type=range]{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:inherit;font-size:11px;padding:3px 5px;border-radius:2px;outline:none;cursor:pointer}
+select:hover,input[type=range]:hover{border-color:var(--accent)}
+input[type=range]{-webkit-appearance:none;width:72px;height:4px;padding:0;background:linear-gradient(to right,var(--accent) var(--p,50%),var(--border) var(--p,50%))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:var(--accent);cursor:pointer}
+#curl{background:var(--bg);border:1px solid var(--border);color:var(--accent);font-family:inherit;font-size:11px;padding:4px 7px;border-radius:2px;outline:none;width:180px}
+#curl:focus{border-color:var(--accent)}
+.btn{padding:4px 11px;border:1px solid var(--border);background:transparent;color:var(--text);font-family:inherit;font-size:10px;letter-spacing:1px;cursor:pointer;border-radius:2px;text-transform:uppercase;transition:all .15s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.on{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn.d{border-color:var(--accent2);color:var(--accent2)}
+.btn.d:hover{background:var(--accent2);color:#000}
+.dv{width:1px;height:26px;background:var(--border);margin:0 3px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">ESP32-<span>CAM</span>&nbsp;&middot;&nbsp;FPV</div>
+  <div class="meters">
+    <div class="meter"><div class="mval" id="fv">--</div><div class="mlbl">FPS</div></div>
+    <div class="meter"><div class="mval" id="lv">--</div><div class="mlbl">MS</div></div>
+    <div class="badge green" id="cb">OFFLINE</div>
+  </div>
+</header>
+<main id="vp">
+  <img id="sv" alt="">
+  <div class="hud">
+    <div class="c tl"></div><div class="c tr"></div>
+    <div class="c bl"></div><div class="c br"></div>
+    <div class="cx"></div>
+    <div class="sl"></div>
+    <div class="rec" id="rec">REC</div>
+  </div>
+  <div class="ns" id="ns">
+    <div class="ns-icon">&#x1F4E1;</div>
+    <div class="ns-txt">No Signal</div>
+    <div class="ns-url" id="nu">Enter camera IP below</div>
+  </div>
+</main>
+<footer>
+  <span class="lbl">IP</span>
+  <input type="text" id="curl" placeholder="192.168.1.xx">
+  <button class="btn" id="sb">&#9654; Stream</button>
+  <button class="btn d" id="xb">&#9632; Stop</button>
+  <div class="dv"></div>
+  <span class="lbl">Size</span>
+  <select id="fs">
+    <option value="5">QVGA 320x240</option>
+    <option value="6">CIF 400x296</option>
+    <option value="7">HVGA 480x320</option>
+    <option value="8" selected>VGA 640x480</option>
+    <option value="9">SVGA 800x600</option>
+  </select>
+  <span class="lbl">Quality</span>
+  <input type="range" id="sq" min="4" max="40" value="10">
+  <div class="dv"></div>
+  <span class="lbl">Bright</span>
+  <input type="range" id="sb2" min="-2" max="2" value="1">
+  <span class="lbl">Contrast</span>
+  <input type="range" id="sc" min="-2" max="2" value="1">
+  <div class="dv"></div>
+  <button class="btn on" id="bvf">&#8597; Flip</button>
+  <button class="btn" id="bhm">&#8596; Mirror</button>
+  <button class="btn" id="bfl">&#9889; Flash</button>
+  <button class="btn" id="bfs" style="margin-left:auto">&#x26F6; Full</button>
+</footer>
+<script>
+(()=>{
+  let ip='',streaming=false,fc=0,lt=performance.now(),flash=false,vf=1,hm=0;
+  const img=document.getElementById('sv'),ns=document.getElementById('ns'),
+        rec=document.getElementById('rec'),curl=document.getElementById('curl'),
+        cb=document.getElementById('cb'),fv=document.getElementById('fv'),
+        lv=document.getElementById('lv'),nu=document.getElementById('nu');
 
+  // Auto-detect if served from ESP32
+  const h=location.hostname;
+  if(h&&h.match(/^\d+\.\d+\.\d+\.\d+$/)){curl.value=h;nu.textContent='http://'+h+':81/stream';}
+  else{curl.value='192.168.1.100';}
+
+  const api=p=>'http://'+ip+p;
+  const ctl=(v,val)=>{if(!ip)return;fetch(api('/control?var='+v+'&val='+val)).catch(()=>{});};
+  const setLive=on=>{cb.textContent=on?'LIVE':'OFFLINE';cb.className='badge '+(on?'green':'red');rec.className='rec'+(on?' on':'');};
+  const trk=el=>{const p=((+el.value-+el.min)/(+el.max-+el.min)*100).toFixed(1);el.style.setProperty('--p',p+'%');};
+
+  let t0=0;
+  const start=()=>{
+    ip=curl.value.trim().replace(/^https?:\/\//,'').replace(/\/.*/,'');
+    if(!ip)return;
+    t0=performance.now();fc=0;streaming=true;
+    img.onload=()=>{ns.classList.add('hidden');setLive(true);fc++;lv.textContent=Math.round(performance.now()-t0);t0=performance.now();};
+    img.onerror=()=>{setLive(false);ns.classList.remove('hidden');if(streaming)setTimeout(()=>{img.src='http://'+ip+':81/stream?t='+Date.now();},2000);};
+    img.src='http://'+ip+':81/stream';
+  };
+  const stop=()=>{streaming=false;img.src='';setLive(false);ns.classList.remove('hidden');fv.textContent='--';lv.textContent='--';};
+
+  setInterval(()=>{if(!streaming)return;const n=performance.now(),e=(n-lt)/1000;if(e>=1){fv.textContent=(fc/e).toFixed(0);fc=0;lt=n;}},250);
+
+  document.getElementById('sb').onclick=start;
+  document.getElementById('xb').onclick=stop;
+  document.getElementById('fs').onchange=e=>ctl('framesize',e.target.value);
+  document.getElementById('sq').oninput=e=>{trk(e.target);ctl('quality',e.target.value);};
+  document.getElementById('sb2').oninput=e=>{trk(e.target);ctl('brightness',e.target.value);};
+  document.getElementById('sc').oninput=e=>{trk(e.target);ctl('contrast',e.target.value);};
+  ['sq','sb2','sc'].forEach(id=>trk(document.getElementById(id)));
+
+  document.getElementById('bvf').onclick=e=>{vf=vf?0:1;ctl('vflip',vf);e.target.classList.toggle('on',vf===1);};
+  document.getElementById('bhm').onclick=e=>{hm=hm?0:1;ctl('hmirror',hm);e.target.classList.toggle('on',hm===1);};
+  document.getElementById('bfl').onclick=e=>{flash=!flash;ctl('flash',flash?1:0);e.target.classList.toggle('on',flash);};
+  document.getElementById('bfs').onclick=()=>{const v=document.getElementById('vp');!document.fullscreenElement?v.requestFullscreen&&v.requestFullscreen():document.exitFullscreen&&document.exitFullscreen();};
+
+  document.addEventListener('keydown',e=>{
+    if(e.code==='Space'){e.preventDefault();streaming?stop():start();}
+    if(e.code==='KeyF')document.getElementById('bfs').click();
+    if(e.code==='KeyL')document.getElementById('bfl').click();
+  });
+
+  // Auto-start if IP detected from URL
+  if(location.hostname.match(/^\d+\.\d+\.\d+\.\d+$/))setTimeout(start,300);
+})();
+</script>
+</body>
+</html>)rawhtml";
+
+// ─── WEB UI HANDLER ────────────────────────────────────────
 static esp_err_t indexHandler(httpd_req_t* req) {
-    // Serve the embedded gzipped HTML viewer
     httpd_resp_set_type(req, "text/html");
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    httpd_resp_send(req,
-        (const char*)index_html_gz_start,
-        index_html_gz_end - index_html_gz_start);
+    httpd_resp_send(req, INDEX_HTML, strlen(INDEX_HTML));
     return ESP_OK;
 }
 
