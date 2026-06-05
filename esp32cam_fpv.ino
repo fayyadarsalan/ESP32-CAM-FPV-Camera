@@ -295,8 +295,8 @@ header{display:flex;align-items:center;gap:12px;padding:0 14px;background:var(--
 .mlbl{font-size:8px;letter-spacing:1.5px;color:#4a6070;text-transform:uppercase}
 .badge{font-size:10px;letter-spacing:1px;padding:2px 8px;border-radius:2px;border:1px solid currentColor;text-transform:uppercase;margin-left:8px}
 .green{color:var(--green)}.red{color:var(--accent2)}
-main{position:relative;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center}
-#sv{max-width:100%;max-height:100%;object-fit:contain;display:block}
+main{position:relative;overflow:hidden;background:#000;display:flex;align-items:stretch;justify-content:center}
+#sv{width:100%;height:100%;object-fit:contain;display:block}
 .hud{position:absolute;inset:0;pointer-events:none}
 .c{position:absolute;width:26px;height:26px;border-color:var(--accent);border-style:solid;opacity:.45}
 .tl{top:10px;left:10px;border-width:2px 0 0 2px}.tr{top:10px;right:10px;border-width:2px 2px 0 0}
@@ -368,6 +368,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
     <option value="7">HVGA 480x320</option>
     <option value="8" selected>VGA 640x480</option>
     <option value="9">SVGA 800x600</option>
+    <option value="10">XGA 1024x768</option>
+    <option value="13">HD 1280x720</option>
   </select>
   <span class="lbl">Quality</span>
   <input type="range" id="sq" min="4" max="40" value="10">
@@ -384,13 +386,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 </footer>
 <script>
 (()=>{
-  let ip='',streaming=false,fc=0,lt=performance.now(),flash=false,vf=1,hm=0;
+  let ip='',streaming=false,flash=false,vf=1,hm=0;
+  // FPS + latency via canvas centre-pixel diff (works with MJPEG img tags)
+  let fc=0,fpsBase=performance.now(),lastPx=-1,frameTs=0,rafId=null;
+  const cv=document.createElement('canvas');cv.width=cv.height=4;
+  const ctx2=cv.getContext('2d',{willReadFrequently:true});
+
   const img=document.getElementById('sv'),ns=document.getElementById('ns'),
         rec=document.getElementById('rec'),curl=document.getElementById('curl'),
         cb=document.getElementById('cb'),fv=document.getElementById('fv'),
         lv=document.getElementById('lv'),nu=document.getElementById('nu');
 
-  // Auto-detect if served from ESP32
   const h=location.hostname;
   if(h&&h.match(/^\d+\.\d+\.\d+\.\d+$/)){curl.value=h;nu.textContent='http://'+h+':81/stream';}
   else{curl.value='192.168.1.100';}
@@ -400,18 +406,42 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   const setLive=on=>{cb.textContent=on?'LIVE':'OFFLINE';cb.className='badge '+(on?'green':'red');rec.className='rec'+(on?' on':'');};
   const trk=el=>{const p=((+el.value-+el.min)/(+el.max-+el.min)*100).toFixed(1);el.style.setProperty('--p',p+'%');};
 
-  let t0=0;
+  function rafLoop(){
+    if(!streaming){rafId=null;return;}
+    rafId=requestAnimationFrame(rafLoop);
+    if(!img.naturalWidth||!img.complete)return;
+    try{
+      // Sample a 4x4 patch from the centre of the frame
+      const sx=Math.floor(img.naturalWidth/2-2),sy=Math.floor(img.naturalHeight/2-2);
+      ctx2.drawImage(img,sx,sy,4,4,0,0,4,4);
+      // Use sum of all pixels as a cheap frame-change hash
+      const d=ctx2.getImageData(0,0,4,4).data;
+      let sum=0;for(let i=0;i<d.length;i+=4)sum+=d[i]+d[i+1]+d[i+2];
+      if(sum!==lastPx){
+        const now=performance.now();
+        if(frameTs>0)lv.textContent=Math.round(now-frameTs);
+        frameTs=now;
+        lastPx=sum;
+        fc++;
+      }
+    }catch(e){}
+    // Update FPS display every second
+    const elapsed=(performance.now()-fpsBase)/1000;
+    if(elapsed>=1){fv.textContent=(fc/elapsed).toFixed(0);fc=0;fpsBase=performance.now();}
+  }
+
   const start=()=>{
     ip=curl.value.trim().replace(/^https?:\/\//,'').replace(/\/.*/,'');
     if(!ip)return;
-    t0=performance.now();fc=0;streaming=true;
-    img.onload=()=>{ns.classList.add('hidden');setLive(true);fc++;lv.textContent=Math.round(performance.now()-t0);t0=performance.now();};
-    img.onerror=()=>{setLive(false);ns.classList.remove('hidden');if(streaming)setTimeout(()=>{img.src='http://'+ip+':81/stream?t='+Date.now();},2000);};
+    fc=0;fpsBase=performance.now();lastPx=-1;frameTs=0;streaming=true;
+    img.onload=()=>{ns.classList.add('hidden');setLive(true);};
+    img.onerror=()=>{setLive(false);ns.classList.remove('hidden');
+      if(streaming)setTimeout(()=>{img.src='http://'+ip+':81/stream?t='+Date.now();},2000);};
     img.src='http://'+ip+':81/stream';
+    if(!rafId)rafLoop();
   };
-  const stop=()=>{streaming=false;img.src='';setLive(false);ns.classList.remove('hidden');fv.textContent='--';lv.textContent='--';};
-
-  setInterval(()=>{if(!streaming)return;const n=performance.now(),e=(n-lt)/1000;if(e>=1){fv.textContent=(fc/e).toFixed(0);fc=0;lt=n;}},250);
+  const stop=()=>{streaming=false;img.src='';setLive(false);
+    ns.classList.remove('hidden');fv.textContent='--';lv.textContent='--';rafId=null;};
 
   document.getElementById('sb').onclick=start;
   document.getElementById('xb').onclick=stop;
@@ -424,7 +454,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   document.getElementById('bvf').onclick=e=>{vf=vf?0:1;ctl('vflip',vf);e.target.classList.toggle('on',vf===1);};
   document.getElementById('bhm').onclick=e=>{hm=hm?0:1;ctl('hmirror',hm);e.target.classList.toggle('on',hm===1);};
   document.getElementById('bfl').onclick=e=>{flash=!flash;ctl('flash',flash?1:0);e.target.classList.toggle('on',flash);};
-  document.getElementById('bfs').onclick=()=>{const v=document.getElementById('vp');!document.fullscreenElement?v.requestFullscreen&&v.requestFullscreen():document.exitFullscreen&&document.exitFullscreen();};
+  document.getElementById('bfs').onclick=()=>{const v=document.getElementById('vp');
+    !document.fullscreenElement?v.requestFullscreen&&v.requestFullscreen():document.exitFullscreen&&document.exitFullscreen();};
 
   document.addEventListener('keydown',e=>{
     if(e.code==='Space'){e.preventDefault();streaming?stop():start();}
@@ -432,7 +463,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
     if(e.code==='KeyL')document.getElementById('bfl').click();
   });
 
-  // Auto-start if IP detected from URL
   if(location.hostname.match(/^\d+\.\d+\.\d+\.\d+$/))setTimeout(start,300);
 })();
 </script>
