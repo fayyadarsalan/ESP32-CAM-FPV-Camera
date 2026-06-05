@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>ESP32-CAM FPV</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg:       #080c0f;
+    --panel:    #0d1419;
+    --border:   #1a2a35;
+    --accent:   #00e5ff;
+    --accent2:  #ff3d00;
+    --green:    #00ff87;
+    --warn:     #ffb300;
+    --text:     #cdd8e0;
+    --mono:     'Share Tech Mono', monospace;
+    --body:     'Exo 2', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: 44px 1fr auto;
+    overflow: hidden;
+  }
+
+  /* ── TOP BAR ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--accent2); }
+  .badges {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    align-items: center;
+  }
+  .badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    text-transform: uppercase;
+  }
+  .badge.green  { color: var(--green); }
+  .badge.red    { color: var(--accent2); }
+  .badge.yellow { color: var(--warn); }
+
+  /* latency/fps meters */
+  .meters {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .meter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+  .meter-val {
+    font-family: var(--mono);
+    font-size: 15px;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .meter-label {
+    font-size: 8px;
+    letter-spacing: 1.5px;
+    color: #4a6070;
+    text-transform: uppercase;
+  }
+  .sep {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+  }
+
+  /* ── MAIN VIEWPORT ── */
+  main {
+    position: relative;
+    overflow: hidden;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #stream-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    image-rendering: auto;
+  }
+
+  /* HUD overlay */
+  .hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  /* Corner brackets */
+  .corner {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    border-color: var(--accent);
+    border-style: solid;
+    opacity: 0.5;
+  }
+  .corner.tl { top:12px; left:12px;  border-width:2px 0 0 2px; }
+  .corner.tr { top:12px; right:12px; border-width:2px 2px 0 0; }
+  .corner.bl { bottom:12px; left:12px;  border-width:0 0 2px 2px; }
+  .corner.br { bottom:12px; right:12px; border-width:0 2px 2px 0; }
+
+  /* Centre crosshair */
+  .crosshair {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    width: 20px; height: 20px;
+    opacity: 0.35;
+  }
+  .crosshair::before, .crosshair::after {
+    content: '';
+    position: absolute;
+    background: var(--accent);
+  }
+  .crosshair::before { width:1px; height:100%; left:50%; transform:translateX(-50%); }
+  .crosshair::after  { height:1px; width:100%; top:50%; transform:translateY(-50%); }
+
+  /* Scan line effect */
+  .scanlines {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 3px,
+      rgba(0,0,0,0.08) 3px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+  }
+
+  /* REC indicator */
+  .rec-dot {
+    position: absolute;
+    top: 14px;
+    right: 52px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--accent2);
+    opacity: 0;
+    transition: opacity .3s;
+  }
+  .rec-dot.on { opacity: 1; }
+  .rec-dot::before {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent2);
+    animation: blink 1s step-start infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* No-signal overlay */
+  .no-signal {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    z-index: 5;
+    transition: opacity .4s;
+  }
+  .no-signal.hidden { opacity: 0; pointer-events: none; }
+  .no-signal-icon { font-size: 40px; opacity: .3; }
+  .no-signal-text {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 3px;
+    color: #4a6070;
+    text-transform: uppercase;
+  }
+  .no-signal-url {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+  }
+  .connect-btn {
+    margin-top: 8px;
+    padding: 8px 24px;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: background .2s, color .2s;
+  }
+  .connect-btn:hover { background: var(--accent); color: #000; }
+
+  /* ── BOTTOM CONTROLS ── */
+  footer {
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .ctrl-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ctrl-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    color: #4a6070;
+    text-transform: uppercase;
+    white-space: nowrap;
+    min-width: 52px;
+  }
+
+  select, input[type=range] {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 3px 6px;
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  select:hover, input[type=range]:hover { border-color: var(--accent); }
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 80px;
+    height: 4px;
+    padding: 0;
+    background: linear-gradient(to right, var(--accent) var(--pct,50%), var(--border) var(--pct,50%));
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+  }
+
+  .btn {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    border-radius: 2px;
+    text-transform: uppercase;
+    transition: all .15s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+  .btn.danger { border-color: var(--accent2); color: var(--accent2); }
+  .btn.danger:hover { background: var(--accent2); color: #000; }
+
+  .divider {
+    width: 1px;
+    height: 28px;
+    background: var(--border);
+    margin: 0 4px;
+  }
+
+  /* URL input */
+  #cam-url {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 2px;
+    outline: none;
+    width: 210px;
+  }
+  #cam-url:focus { border-color: var(--accent); }
+
+  /* Fullscreen */
+  main:fullscreen, main:-webkit-full-screen { background: #000; }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo">ESP32-<span>CAM</span> · FPV</div>
+  <div class="sep"></div>
+  <div class="meters">
+    <div class="meter">
+      <div class="meter-val" id="fps-val">--</div>
+      <div class="meter-label">FPS</div>
+    </div>
+    <div class="meter">
+      <div class="meter-val" id="lat-val">--</div>
+      <div class="meter-label">MS</div>
+    </div>
+    <div class="meter">
+      <div class="meter-val" id="rssi-val">--</div>
+      <div class="meter-label">RSSI</div>
+    </div>
+  </div>
+  <div class="sep"></div>
+  <div class="badges">
+    <div class="badge green" id="conn-badge">OFFLINE</div>
+  </div>
+</header>
+
+<!-- ── VIEWPORT ── -->
+<main id="viewport">
+  <img id="stream-img" alt="">
+
+  <!-- HUD -->
+  <div class="hud">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+    <div class="crosshair"></div>
+    <div class="scanlines"></div>
+    <div class="rec-dot" id="rec-dot">REC</div>
+  </div>
+
+  <!-- No signal -->
+  <div class="no-signal" id="no-signal">
+    <div class="no-signal-icon">📡</div>
+    <div class="no-signal-text">No Signal</div>
+    <div class="no-signal-url" id="hint-url"></div>
+    <button class="connect-btn" id="connect-hint-btn">Connect</button>
+  </div>
+</main>
+
+<!-- ── CONTROLS ── -->
+<footer>
+  <!-- URL -->
+  <div class="ctrl-group">
+    <span class="ctrl-label">Camera IP</span>
+    <input type="text" id="cam-url" placeholder="192.168.1.xx" value="">
+  </div>
+  <button class="btn" id="stream-btn">▶ Stream</button>
+  <button class="btn danger" id="stop-btn">■ Stop</button>
+
+  <div class="divider"></div>
+
+  <!-- Resolution -->
+  <div class="ctrl-group">
+    <span class="ctrl-label">Size</span>
+    <select id="sel-framesize">
+      <option value="5">QVGA 320×240</option>
+      <option value="6" selected>CIF 400×296</option>
+      <option value="7">HVGA 480×320</option>
+      <option value="8">VGA 640×480</option>
+      <option value="9">SVGA 800×600</option>
+    </select>
+  </div>
+
+  <!-- Quality -->
+  <div class="ctrl-group">
+    <span class="ctrl-label">Quality</span>
+    <input type="range" id="sl-quality" min="4" max="40" value="10" step="1">
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Brightness -->
+  <div class="ctrl-group">
+    <span class="ctrl-label">Bright</span>
+    <input type="range" id="sl-brightness" min="-2" max="2" value="1" step="1">
+  </div>
+
+  <!-- Contrast -->
+  <div class="ctrl-group">
+    <span class="ctrl-label">Contrast</span>
+    <input type="range" id="sl-contrast" min="-2" max="2" value="1" step="1">
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Flip -->
+  <button class="btn" id="btn-vflip">↕ VFlip</button>
+  <button class="btn" id="btn-hmirror">↔ Mirror</button>
+
+  <!-- Flash -->
+  <button class="btn" id="btn-flash">⚡ Flash</button>
+
+  <!-- Fullscreen -->
+  <button class="btn" id="btn-fs" style="margin-left:auto">⛶ Full</button>
+</footer>
+
+<script>
+(() => {
+  // ── State ──────────────────────────────────────────────
+  let camIp = '';
+  let streaming = false;
+  let frameCount = 0;
+  let lastFpsTime = performance.now();
+  let flashOn = false;
+  let vflip = 1, hmirror = 0;
+  let streamStartTime = 0;
+
+  const img        = document.getElementById('stream-img');
+  const noSignal   = document.getElementById('no-signal');
+  const recDot     = document.getElementById('rec-dot');
+  const urlInput   = document.getElementById('cam-url');
+  const connBadge  = document.getElementById('conn-badge');
+  const fpsVal     = document.getElementById('fps-val');
+  const latVal     = document.getElementById('lat-val');
+  const rssiVal    = document.getElementById('rssi-val');
+  const hintUrl    = document.getElementById('hint-url');
+
+  // Try to auto-detect camera IP from referrer
+  const autoIp = () => {
+    if (location.hostname && location.hostname !== 'localhost' &&
+        !location.hostname.startsWith('192.168') === false ||
+        location.hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      return location.hostname;
+    }
+    return '';
+  };
+
+  const detected = autoIp();
+  urlInput.value = detected || '192.168.1.100';
+  if (detected) hintUrl.textContent = `http://${detected}:81/stream`;
+  else hintUrl.textContent = 'Enter camera IP above';
+
+  // ── Helpers ─────────────────────────────────────────────
+  const api = (path) => `http://${camIp}${path}`;
+
+  const sendControl = (varName, value) => {
+    if (!camIp) return;
+    fetch(api(`/control?var=${varName}&val=${value}`))
+      .catch(() => {});
+  };
+
+  const setConnected = (on) => {
+    connBadge.textContent = on ? 'LIVE' : 'OFFLINE';
+    connBadge.className   = 'badge ' + (on ? 'green' : 'red');
+    recDot.className      = 'rec-dot ' + (on ? 'on' : '');
+  };
+
+  const updateRangeTrack = (el) => {
+    const min = +el.min, max = +el.max, val = +el.value;
+    const pct = ((val - min) / (max - min) * 100).toFixed(1);
+    el.style.setProperty('--pct', pct + '%');
+  };
+
+  // ── Stream ──────────────────────────────────────────────
+  let streamUrl = '';
+
+  const startStream = () => {
+    camIp = urlInput.value.trim().replace(/^https?:\/\//, '').replace(/\/.*/, '');
+    if (!camIp) return;
+    streamUrl = `http://${camIp}:81/stream`;
+    streamStartTime = performance.now();
+    frameCount = 0;
+
+    img.onload = () => {
+      noSignal.classList.add('hidden');
+      setConnected(true);
+      frameCount++;
+      updateLatency();
+    };
+    img.onerror = () => {
+      setConnected(false);
+      noSignal.classList.remove('hidden');
+      // Auto-retry after 2s
+      if (streaming) setTimeout(() => { img.src = streamUrl + '?t=' + Date.now(); }, 2000);
+    };
+    img.src = streamUrl;
+    streaming = true;
+  };
+
+  const stopStream = () => {
+    streaming = false;
+    img.src = '';
+    setConnected(false);
+    noSignal.classList.remove('hidden');
+    fpsVal.textContent = '--';
+    latVal.textContent = '--';
+    rssiVal.textContent = '--';
+  };
+
+  // ── FPS counter ─────────────────────────────────────────
+  const measureFps = () => {
+    const now = performance.now();
+    const elapsed = (now - lastFpsTime) / 1000;
+    if (elapsed >= 1) {
+      fpsVal.textContent = (frameCount / elapsed).toFixed(0);
+      frameCount = 0;
+      lastFpsTime = now;
+    }
+  };
+
+  // img load fires per-frame for MJPEG streams in some browsers
+  // We keep a MutationObserver fallback for latency estimation
+  const updateLatency = () => {
+    // Latency = time from last frame request to now (rough estimate)
+    const rough = Math.round(performance.now() - streamStartTime);
+    if (rough < 5000) latVal.textContent = rough; // only valid at start
+  };
+
+  setInterval(() => {
+    if (streaming) {
+      measureFps();
+      // Poll status every 3s for RSSI
+    }
+  }, 200);
+
+  let rssiTimer = null;
+  const pollStatus = () => {
+    if (!camIp || !streaming) return;
+    fetch(api('/status'))
+      .then(r => r.json())
+      .then(d => {
+        // RSSI not in status JSON but we display free heap as debug
+      })
+      .catch(() => {});
+  };
+
+  // ── Controls ─────────────────────────────────────────────
+  document.getElementById('stream-btn').addEventListener('click', startStream);
+  document.getElementById('stop-btn').addEventListener('click', stopStream);
+  document.getElementById('connect-hint-btn').addEventListener('click', () => {
+    urlInput.value = detected || urlInput.value;
+    startStream();
+  });
+
+  document.getElementById('sel-framesize').addEventListener('change', (e) => {
+    sendControl('framesize', e.target.value);
+  });
+
+  const qualitySlider = document.getElementById('sl-quality');
+  qualitySlider.addEventListener('input', (e) => {
+    updateRangeTrack(e.target);
+    sendControl('quality', e.target.value);
+  });
+  updateRangeTrack(qualitySlider);
+
+  const brightnessSlider = document.getElementById('sl-brightness');
+  brightnessSlider.addEventListener('input', (e) => {
+    updateRangeTrack(e.target);
+    sendControl('brightness', e.target.value);
+  });
+  updateRangeTrack(brightnessSlider);
+
+  const contrastSlider = document.getElementById('sl-contrast');
+  contrastSlider.addEventListener('input', (e) => {
+    updateRangeTrack(e.target);
+    sendControl('contrast', e.target.value);
+  });
+  updateRangeTrack(contrastSlider);
+
+  document.getElementById('btn-vflip').addEventListener('click', (e) => {
+    vflip = vflip ? 0 : 1;
+    sendControl('vflip', vflip);
+    e.target.classList.toggle('active', vflip === 1);
+  });
+  document.getElementById('btn-vflip').classList.add('active'); // default on
+
+  document.getElementById('btn-hmirror').addEventListener('click', (e) => {
+    hmirror = hmirror ? 0 : 1;
+    sendControl('hmirror', hmirror);
+    e.target.classList.toggle('active', hmirror === 1);
+  });
+
+  document.getElementById('btn-flash').addEventListener('click', (e) => {
+    flashOn = !flashOn;
+    sendControl('flash', flashOn ? 1 : 0);
+    e.target.classList.toggle('active', flashOn);
+  });
+
+  // Fullscreen
+  document.getElementById('btn-fs').addEventListener('click', () => {
+    const vp = document.getElementById('viewport');
+    if (!document.fullscreenElement) {
+      vp.requestFullscreen?.() || vp.webkitRequestFullscreen?.();
+    } else {
+      document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+    }
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { e.preventDefault(); streaming ? stopStream() : startStream(); }
+    if (e.code === 'KeyF')  { document.getElementById('btn-fs').click(); }
+    if (e.code === 'KeyL')  { document.getElementById('btn-flash').click(); }
+  });
+
+  // Auto-start if we detected a camera IP (embedded mode)
+  if (detected) setTimeout(startStream, 400);
+
+})();
+</script>
+</body>
+</html>
