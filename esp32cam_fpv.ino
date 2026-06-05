@@ -214,7 +214,7 @@ static esp_err_t statusHandler(httpd_req_t* req) {
         "{\"psram\":%s,\"framesize\":%d,\"quality\":%d,"
         "\"brightness\":%d,\"contrast\":%d,\"saturation\":%d,"
         "\"vflip\":%d,\"hmirror\":%d,\"agc_gain\":%d,"
-        "\"free_heap\":%lu}",
+        "\"free_heap\":%lu,\"rssi\":%d}",
         psramFound() ? "true" : "false",
         s->status.framesize,
         s->status.quality,
@@ -224,7 +224,8 @@ static esp_err_t statusHandler(httpd_req_t* req) {
         s->status.vflip,
         s->status.hmirror,
         s->status.agc_gain,
-        (unsigned long)ESP.getFreeHeap()
+        (unsigned long)ESP.getFreeHeap(),
+        WiFi.RSSI()
     );
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -335,8 +336,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <header>
   <div class="logo">ESP32-<span>CAM</span>&nbsp;&middot;&nbsp;FPV</div>
   <div class="meters">
-    <div class="meter"><div class="mval" id="fv">--</div><div class="mlbl">FPS</div></div>
-    <div class="meter"><div class="mval" id="lv">--</div><div class="mlbl">MS</div></div>
+    <div class="meter"><div class="mval" id="rv">--</div><div class="mlbl">dBm</div></div>
     <div class="badge green" id="cb">OFFLINE</div>
   </div>
 </header>
@@ -386,16 +386,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 </footer>
 <script>
 (()=>{
-  let ip='',streaming=false,flash=false,vf=1,hm=0;
-  // FPS + latency via canvas centre-pixel diff (works with MJPEG img tags)
-  let fc=0,fpsBase=performance.now(),lastPx=-1,frameTs=0,rafId=null;
-  const cv=document.createElement('canvas');cv.width=cv.height=4;
-  const ctx2=cv.getContext('2d',{willReadFrequently:true});
+  let ip='',streaming=false,flash=false,vf=1,hm=0,rssiTimer=null;
 
   const img=document.getElementById('sv'),ns=document.getElementById('ns'),
         rec=document.getElementById('rec'),curl=document.getElementById('curl'),
-        cb=document.getElementById('cb'),fv=document.getElementById('fv'),
-        lv=document.getElementById('lv'),nu=document.getElementById('nu');
+        cb=document.getElementById('cb'),rv=document.getElementById('rv'),
+        nu=document.getElementById('nu');
 
   const h=location.hostname;
   if(h&&h.match(/^\d+\.\d+\.\d+\.\d+$/)){curl.value=h;nu.textContent='http://'+h+':81/stream';}
@@ -406,42 +402,36 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   const setLive=on=>{cb.textContent=on?'LIVE':'OFFLINE';cb.className='badge '+(on?'green':'red');rec.className='rec'+(on?' on':'');};
   const trk=el=>{const p=((+el.value-+el.min)/(+el.max-+el.min)*100).toFixed(1);el.style.setProperty('--p',p+'%');};
 
-  function rafLoop(){
-    if(!streaming){rafId=null;return;}
-    rafId=requestAnimationFrame(rafLoop);
-    if(!img.naturalWidth||!img.complete)return;
-    try{
-      // Sample a 4x4 patch from the centre of the frame
-      const sx=Math.floor(img.naturalWidth/2-2),sy=Math.floor(img.naturalHeight/2-2);
-      ctx2.drawImage(img,sx,sy,4,4,0,0,4,4);
-      // Use sum of all pixels as a cheap frame-change hash
-      const d=ctx2.getImageData(0,0,4,4).data;
-      let sum=0;for(let i=0;i<d.length;i+=4)sum+=d[i]+d[i+1]+d[i+2];
-      if(sum!==lastPx){
-        const now=performance.now();
-        if(frameTs>0)lv.textContent=Math.round(now-frameTs);
-        frameTs=now;
-        lastPx=sum;
-        fc++;
-      }
-    }catch(e){}
-    // Update FPS display every second
-    const elapsed=(performance.now()-fpsBase)/1000;
-    if(elapsed>=1){fv.textContent=(fc/elapsed).toFixed(0);fc=0;fpsBase=performance.now();}
-  }
+  // Poll RSSI from /status every 5 seconds — tiny JSON fetch, zero camera impact
+  const pollRssi=()=>{
+    fetch(api('/status'),{cache:'no-store'})
+      .then(r=>r.json())
+      .then(d=>{
+        const r=d.rssi;
+        rv.textContent=r+' dBm';
+        // Colour: good >= -60, ok >= -75, poor < -75
+        rv.style.color=r>=-60?'var(--green)':r>=-75?'var(--warn)':'var(--accent2)';
+      })
+      .catch(()=>{rv.textContent='--';rv.style.color='';});
+  };
 
   const start=()=>{
     ip=curl.value.trim().replace(/^https?:\/\//,'').replace(/\/.*/,'');
     if(!ip)return;
-    fc=0;fpsBase=performance.now();lastPx=-1;frameTs=0;streaming=true;
+    streaming=true;
     img.onload=()=>{ns.classList.add('hidden');setLive(true);};
     img.onerror=()=>{setLive(false);ns.classList.remove('hidden');
       if(streaming)setTimeout(()=>{img.src='http://'+ip+':81/stream?t='+Date.now();},2000);};
     img.src='http://'+ip+':81/stream';
-    if(!rafId)rafLoop();
+    pollRssi();
+    rssiTimer=setInterval(pollRssi,5000);
   };
-  const stop=()=>{streaming=false;img.src='';setLive(false);
-    ns.classList.remove('hidden');fv.textContent='--';lv.textContent='--';rafId=null;};
+
+  const stop=()=>{
+    streaming=false;img.src='';setLive(false);
+    ns.classList.remove('hidden');rv.textContent='--';rv.style.color='';
+    clearInterval(rssiTimer);rssiTimer=null;
+  };
 
   document.getElementById('sb').onclick=start;
   document.getElementById('xb').onclick=stop;
