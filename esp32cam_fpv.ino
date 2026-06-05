@@ -23,8 +23,8 @@
  */
 
 // ─── USER CONFIGURATION ────────────────────────────────────
-#define WIFI_SSID   "YOUR_WIFI_SSID"     // <-- change this
-#define WIFI_PASS   "YOUR_WIFI_PASSWORD" // <-- change this
+#define WIFI_SSID = "YOUR_WIFI_SSID"     // <-- change this
+#define WIFI_PASS = "YOUR_WIFI_PASSWORD" // <-- change this
 // ───────────────────────────────────────────────────────────
 
 #include "esp_camera.h"
